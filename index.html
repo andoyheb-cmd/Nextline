@@ -84,7 +84,7 @@ const $=id=>document.getElementById(id);
 const fmt=h=>(h%12||12)+":00 "+(h<12||h===24?"AM":"PM");
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const today=()=>{const t=new Date();return t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0")};
-let taken=new Set(),start=null,bookings=[],pin=sessionStorage.getItem("nl_pin")||"";
+let taken=new Set(),loaded=false,start=null,bookings=[],pin=sessionStorage.getItem("nl_pin")||"";
 const ready=!API_URL.startsWith("PASTE");
 
 function route(){const a=location.hash==="#admin";$("pb").hidden=a;$("pa").hidden=!a;if(a&&pin)loadAdmin()}
@@ -97,16 +97,24 @@ const fits=(h,len)=>{for(let i=0;i<len;i++){if(h+i>=CLOSE||taken.has(h+i))return
 function drawSlots(){
   const len=+$("u").value,box=$("slots");box.innerHTML="";
   for(let h=OPEN;h<CLOSE;h++){
-    const b=document.createElement("button");b.type="button";b.className="slot"+(start===h?" sel":"");
-    b.textContent=fmt(h);b.disabled=!fits(h,len);b.onclick=()=>{start=h;drawSlots()};box.appendChild(b);
+    const isTaken=taken.has(h),b=document.createElement("button");b.type="button";
+    b.className="slot"+(start===h?" sel":"");
+    b.innerHTML=fmt(h)+(isTaken?"<br><small>Booked</small>":"");
+    b.disabled=!(loaded&&fits(h,len));b.onclick=()=>{start=h;drawSlots()};box.appendChild(b);
   }
-  if(start!==null&&!fits(start,len))start=null;
+  if(start!==null&&!(loaded&&fits(start,len)))start=null;
 }
-async function loadDay(){
-  start=null;taken=new Set();drawSlots();
-  if(!ready||!$("d").value)return;
-  try{const r=await api({action:"slots",date:$("d").value});taken=new Set(r.taken||[]);drawSlots()}catch(e){msg("bm","Could not load availability. Please refresh.","err")}
+async function refresh(){
+  const d=$("d").value;if(!ready||!d)return false;
+  try{
+    const r=await api({action:"slots",date:d});if(!r.taken)throw 0;
+    if(d!==$("d").value)return false;
+    taken=new Set(r.taken);loaded=true;drawSlots();
+    if($("bm").querySelector(".err"))msg("bm","");return true;
+  }catch(e){loaded=false;drawSlots();msg("bm","Could not load availability. Please refresh.","err");return false}
 }
+async function loadDay(){start=null;taken=new Set();loaded=false;drawSlots();await refresh()}
+setInterval(()=>{if(!document.hidden&&!$("pb").hidden)refresh()},15000);
 $("d").onchange=loadDay;$("u").onchange=drawSlots;
 
 $("go").onclick=async()=>{
@@ -117,6 +125,9 @@ $("go").onclick=async()=>{
   if(!/^\S+@\S+\.\S+$/.test(v.email))return msg("bm","Please enter a valid email.","err");
   if(!v.date||start===null)return msg("bm","Please pick a date and a start time.","err");
   $("go").disabled=true;
+  await refresh();
+  if(start===null){msg("bm","Sorry, that time is no longer available. Please pick another.","err");$("go").disabled=false;return}
+  v.start=start;
   try{
     const r=await fetch(API_URL,{method:"POST",body:JSON.stringify(v)}).then(r=>r.json());
     if(r.error)msg("bm",r.error,"err");
